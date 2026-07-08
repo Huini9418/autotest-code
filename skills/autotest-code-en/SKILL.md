@@ -1,26 +1,20 @@
 ---
-name: auto_test
-description: "Use when the user needs to generate tests for project code. Supports Python/JavaScript/TypeScript/Go/Rust/Java. Trigger expressions include 'generate tests', 'write unit tests', 'write test for this function', 'auto test', 'generate tests', 'automated testing'. Covers the full closed-loop: analyze → design → generate → execute → fix → iterate."
+name: autotest-code
+description: "Use when users need to generate tests for project code. Supports Python/JavaScript/TypeScript/Go/Rust/Java. Triggers include 'generate tests', 'write unit tests', 'write test for this function', 'auto test', 'generate tests', 'automated testing'. Covers full loop: analyze → design → generate → execute → fix → iterate."
 metadata:
   builtin_skill_version: "2.0"
-  zhpaw:
-    emoji: "🧪"
-    requires:
-      bins: [python3, pytest]
 ---
 
 # Automated Test Generation (Multi-language)
 
-Automatically generate tests for the user's project code, execute them,
-and iteratively fix failures. Supports multiple languages:
+Automatically generate tests for your project code, run them, and iteratively fix failures. Supports multiple languages:
 Python / JavaScript / TypeScript / Go / Rust / Java.
 
-> **Path convention:** All `scripts/` paths are relative to this skill
-> directory. When using `execute_shell_command`, set `cwd` to the skill
-> directory, or use absolute paths
-> `python3 <skill_dir>/scripts/xxx.py`.
+> **Path convention**: All `scripts/` paths are relative to this skill directory.
+> When using `execute_shell_command`, set `cwd` to the skill directory,
+> or use absolute path `python3 <skill_dir>/scripts/xxx.py`.
 
-## When to Use / When NOT to Use
+## When to Use / When Not to Use
 
 ### Should Use
 - User asks to "generate tests", "write unit tests", "write test for this function"
@@ -28,7 +22,7 @@ Python / JavaScript / TypeScript / Go / Rust / Java.
 - User wants to add tests for a file/directory/function
 - User wants to improve code coverage
 
-### Should NOT Use
+### Should Not Use
 - User is just asking "how to write tests" (answer directly, no full flow needed)
 - User wants to test the skill scripts themselves
 
@@ -38,18 +32,16 @@ Python / JavaScript / TypeScript / Go / Rust / Java.
 
 #### 0a: Python Environment Discovery (Python projects only)
 
-If the target language is detected as Python, first run environment discovery
-to list all available Python environments on the system:
+If target language is detected as Python, first run environment discovery to list all available Python environments on the system:
 
 ```bash
 execute_shell_command(
-    command="mkdir -p ~/.qwenpaw/tmp/ && python3 <skill_dir>/scripts/discover_python_envs.py <target_path> --output ~/.qwenpaw/tmp/python_envs.json",
+    command="mkdir -p ~/.claude/tmp/ && python3 <skill_dir>/scripts/discover_python_envs.py <target_path> --output ~/.claude/tmp/python_envs.json",
     cwd="<skill_dir>"
 )
 ```
 
-Read `~/.qwenpaw/tmp/python_envs.json` and **present the environment list
-to the user**:
+Read `~/.claude/tmp/python_envs.json` and **present environment list to user**:
 
 ```
 Detected the following Python environments:
@@ -60,144 +52,140 @@ Detected the following Python environments:
 Please select a Python environment (enter number):
 ```
 
-Wait for the user to choose, then save the selected path to
-`~/.qwenpaw/tmp/selected_python.txt`.
+Wait for user selection, then save the selected path to `~/.claude/tmp/selected_python.txt`.
 
-> If `environments` is an empty list, skip this step and fall back to `0b`
-> without passing `--python`.
-> The `recommended` field is the default recommendation and can be suggested
-> to the user directly.
+> If `environments` is empty list, skip this step and fall back to `0b` without passing `--python`.
+> `recommended` field is default recommendation and can be suggested directly to user.
 
 #### 0b: Language and Toolchain Detection
 
 ```bash
 execute_shell_command(
-    command="python3 <skill_dir>/scripts/detect_lang.py <target_path> --python <selected_python> --output ~/.qwenpaw/tmp/lang_detect.json && rm -f ~/.qwenpaw/failure_history.json",
+    command="python3 <skill_dir>/scripts/detect_lang.py <target_path> --python <selected_python> --output ~/.claude/tmp/lang_detect.json && rm -f ~/.claude/failure_history.json",
     cwd="<skill_dir>"
 )
 ```
 
-> If `0a` was not executed or the user did not select, remove the
-> `--python <selected_python>` argument.
+> If `0a` was not executed or user did not select, remove `--python <selected_python>` parameter.
 
-Read `~/.qwenpaw/tmp/lang_detect.json` to confirm:
+Read `~/.claude/tmp/lang_detect.json`, confirm:
 - **language**: target language (python/javascript/typescript/go/rust/java)
-- **framework**: test framework (pytest/jest/vitest/go test/cargo nextest/maven)
-- **toolchain**: whether toolchain is available, prompt user to install if missing
+- **framework**: testing framework (pytest/jest/vitest/go test/cargo nextest/maven)
+- **toolchain**: whether toolchain is available, prompt for installation if missing
   - `python_path`: selected Python interpreter path (Python only, used in later steps)
-- **tree_sitter**: whether tree-sitter deps are available (not needed for Python)
-- **pytest_plugins**: pytest plugin detection (Python only)
-  - `plugins`: plugin availability dict, key is package name (e.g. `pytest-mock`), value contains:
+- **tree_sitter**: whether tree-sitter dependency is available (not needed for Python)
+- **pytest_plugins**: pytest plugin detection for Python projects (Python only)
+  - `plugins`: availability dict for each plugin, key is package name (e.g., `pytest-mock`), value includes:
     - `available`: whether installed
     - `trigger_type`: trigger type (fixture/marker/decorator)
-    - `trigger`: trigger identifier (e.g. `mocker`, `@pytest.mark.asyncio`)
-    - `alt`: alternative approach
-  - `asyncio_mode`: whether asyncio_mode is configured (auto/strict/empty)
-  - `pytest_asyncio`: whether pytest-asyncio is installed (backward compat)
-  - `anyio`: whether anyio is installed (backward compat)
-  - `missing`: list of missing required plugins
-  - `hints`: list of install hints
-  - `hint`: install hint string (backward compat)
+    - `trigger`: trigger identity (e.g., `mocker`, `@pytest.mark.asyncio`)
+    - `alt`: alternative
+  - `asyncio_mode`: whether asyncio_mode configured (auto/strict/empty)
+  - `pytest_asyncio`: whether pytest-asyncio installed (backward compatible)
+  - `anyio`: whether anyio installed (backward compatible)
+  - `missing`: list of required missing plugins
+  - `hints`: list of installation hints
+  - `hint`: installation hint string (backward compatible)
 
-Must clear residual failure history before starting: `rm -f ~/.qwenpaw/failure_history.json`
-(prevents stale data from previous sessions causing false `stop=true`)
+Must clear residual failure history file before start: `rm -f ~/.claude/failure_history.json`
+(prevents `stop=true` false positives from last session's residual data)
 
 **Plugin usage constraints** (Python):
-- Only use plugins where `plugins[<package>].available=true`
+- Only plugins with `plugins[<package name>].available=true` can be used in tests
 - `pytest-mock` not available → use `unittest.mock.patch` / `MagicMock`
-- `hypothesis` not available → use `@pytest.mark.parametrize`
-- `pytest-benchmark` not available → use `time.perf_counter()` for manual timing
+- `hypothesis` not available → use `@pytest.mark.parametrize` parameterized tests
+- `pytest-benchmark` not available → use `time.perf_counter()` manual timing
 - `pytest-subtests` not available → use multiple independent test functions
 - `pytest-freezegun` not available → use `freezegun.freeze_time()` or `unittest.mock.patch`
-- `responses` not available → use `unittest.mock.patch` for requests
+- `responses` not available → use `unittest.mock.patch` to mock requests
 
-If toolchain or tree-sitter dependencies are missing, **inform the user**
-what needs to be installed and wait for confirmation before continuing.
+If toolchain or tree-sitter dependencies are missing, **inform user first** what needs to be installed,
+wait for user confirmation before continuing.
 
-**Async test plugin note** (Python):
-- If `pytest_plugins.missing` contains `pytest-asyncio`,
-  **inform the user** to install: `pip install pytest-asyncio`
-- Or in Step 3, use `@pytest.mark.anyio` if anyio is installed
-- **Do NOT** use `@pytest.mark.asyncio` without pytest-asyncio installed,
-  as it will cause all async tests to fail
+**Async test plugin notes** (Python):
+- If `pytest_plugins.missing` includes `pytest-asyncio`,
+  **inform user first** to install: `pip install pytest-asyncio`
+- Or use `@pytest.mark.anyio` in Step 3 test generation (if anyio is installed)
+- **Do not** use `@pytest.mark.asyncio` without pytest-asyncio installed,
+  will cause all async tests to fail
 
-Locating rules:
-- User gave a file path → use directly
-- User gave only a function name → use `grep_search` to find `def <name>` / `function <name>` in the project
-- In Coding Mode → use the currently open file
-- User gave a directory → recursively analyze all source files in it
+Location rules:
+- User gave file path → use directly
+- User only gave function name → use `grep_search` to locate file in project searching `def <name>` / `function <name>`
+- Coding Mode → take current open file
+- User gave directory → recursively analyze all source files in directory
 
 ### Step 1: AST Analysis
 
 ```bash
 execute_shell_command(
-    command="python3 <skill_dir>/scripts/analyze.py <target_path> --lang <lang> --output ~/.qwenpaw/tmp/analysis.json",
+    command="python3 <skill_dir>/scripts/analyze.py <target_path> --lang <lang> --output ~/.claude/tmp/analysis.json",
     cwd="<skill_dir>"
 )
 ```
 
-Read `~/.qwenpaw/tmp/analysis.json` to understand:
-- Function signatures (args, type annotations, defaults)
-- Branch node count (if/for/while/try/except/BoolOp)
-- Import dependencies
+Read `~/.claude/tmp/analysis.json`, understand:
+- Function signatures (parameters, type annotations, default values)
+- Number of branch nodes (if/for/while/try/except/BoolOp)
+- import dependencies
 - Complexity (cyclomatic complexity)
 - Class and method structure
 
-> Python uses the `ast` module (zero deps), other languages use tree-sitter.
-> Adapters are dynamically discovered via `lang/*_lang.py`.
+> Python uses `ast` module (zero dependency), other languages use tree-sitter.
+> Adapters discovered dynamically via `lang/*_lang.py`, add new language just by adding a file.
 
-### Step 2: Case Design
+### Step 2: Test Case Design
 
 ```bash
 execute_shell_command(
-    command="python3 <skill_dir>/scripts/gen_cases.py --analysis-file ~/.qwenpaw/tmp/analysis.json --lang <lang> --output ~/.qwenpaw/tmp/cases.json",
+    command="python3 <skill_dir>/scripts/gen_cases.py --analysis-file ~/.claude/tmp/analysis.json --lang <lang> --output ~/.claude/tmp/cases.json",
     cwd="<skill_dir>"
 )
 ```
 
-Read `~/.qwenpaw/tmp/cases.json` to get a structured case list with four types:
+Read `~/.claude/tmp/cases.json`, get structured test case list, including four types:
 - **equivalence_class**: normal values derived from type annotations
 - **boundary_value**: boundary value table by parameter type
-- **exception_path**: generated when branch count > 0
-- **decision_table**: generated when branch count >= 3
+- **exception_path**: generated when number of branches > 0
+- **decision_table**: generated when number of branches >= 3
 
-> Case design algorithms are language-agnostic (`case_design.py`),
-> TYPE_BOUNDARIES are injected per language.
+> Test case design algorithm is language-independent (`case_design.py`), TYPE_BOUNDARIES
+> injected by language.
 
 ### Step 3: Generate Test Code
 
-Based on the case list, **you (the LLM)** generate test code. Rules:
+Based on test case list, **you (LLM)** generate the test code. Rules:
 
 #### General Rules
-1. **Naming**: follow language conventions
-2. **Parameterization**: use parametrization for same-type boundary values
-3. **fixture/setup**: extract repeated setup logic into fixtures/setup
-4. **mock**: use mock for external deps (network, filesystem, database)
-5. **Exception assertions**: use language-idiomatic exception assertions
-6. **import**: prefer standard imports, use language-idiomatic fallback if needed
-7. **coverage goal**: every case list entry must have a corresponding test
-8. **isolation**: no test-order dependencies, no global side effects
+1. **Naming conventions**: follow language idiomatic naming
+2. **Parameterization**: use parameterization mechanism for similar boundary values
+3. **Fixture/setup**: extract repeated construction logic into fixture/setup
+4. **Mock**: mock external dependencies (network, filesystem, database)
+5. **Exception assertions**: use language idiomatic exception assertions
+6. **Import**: prefer standard imports, use language idiomatic solutions if path doesn't work
+7. **Coverage goal**: every test case list item must have a corresponding test
+8. **Isolation**: not dependent on test execution order, no global side effects
 
-#### Per-language Idioms
+#### Language Idiomatic Patterns
 
 **Python (pytest)**
-- File naming: `test_<name>.py`, functions `test_<name>_<scenario>`
-- Parametrize: `@pytest.mark.parametrize`
-- Exceptions: `with pytest.raises(ExpectedError):`
+- File naming: `test_<name>.py`, function `test_<name>_<scenario>`
+- Parameterization: `@pytest.mark.parametrize`
+- Exception: `with pytest.raises(ExpectedError):`
 - Mock: `unittest.mock.patch`
 - Placement: `tests/` directory
-- **Plugin usage** (check `pytest_plugins.plugins` in `~/.qwenpaw/tmp/lang_detect.json`):
+- **Plugin usage** (check `pytest_plugins.plugins` in `~/.claude/tmp/lang_detect.json`):
   - `mocker` fixture not available → use `unittest.mock.patch` / `MagicMock`
-  - `@given` not available → use `@pytest.mark.parametrize`
-  - `benchmark` fixture not available → use `time.perf_counter()` for manual timing
+  - `@given` not available → use `@pytest.mark.parametrize` parameterized tests
+  - `benchmark` fixture not available → use `time.perf_counter()` manual timing
   - `subtests` fixture not available → use multiple independent test functions
   - `freezer` fixture not available → use `freezegun.freeze_time()` or `unittest.mock.patch`
-  - `@responses.activate` not available → use `unittest.mock.patch` for requests
+  - `@responses.activate` not available → use `unittest.mock.patch` to mock requests
 - Async tests:
-  - Check `pytest_plugins` field from `~/.qwenpaw/tmp/lang_detect.json`
+  - Check `pytest_plugins` field in `~/.claude/tmp/lang_detect.json`
   - `pytest_asyncio=true` → use `@pytest.mark.asyncio`
   - `pytest_asyncio=false` but `anyio=true` → use `@pytest.mark.anyio`
-  - Both missing → **inform user to install first**, do not generate async tests
+  - Both missing → **inform user first to install**, don't generate async tests
 
 **JavaScript/TypeScript (Jest)**
 - File naming: `<name>.test.js` / `<name>.test.ts` (colocated)
@@ -209,38 +197,38 @@ Based on the case list, **you (the LLM)** generate test code. Rules:
 
 **Go**
 - File naming: `<name>_test.go` (same directory)
-- Functions: `func TestName(t *testing.T)`
+- Function: `func TestName(t *testing.T)`
 - Table-driven: `tests := []struct{...}{...}` + `for _, tt := range tests`
 - Assertions: `if got != want { t.Errorf(...) }`
 - Placement: same directory as source file
 
 **Rust**
-- File naming: `tests/<name>.rs` or `#[cfg(test)]` inline
-- Functions: `#[test] fn test_name()`
+- File naming: `tests/<name>.rs` or inline `#[cfg(test)]`
+- Function: `#[test] fn test_name()`
 - Assertions: `assert_eq!(got, want)` / `assert!(condition)`
 - Exceptions: `#[should_panic(expected = "...")]`
-- Placement: `tests/` directory or `mod tests` inline
+- Placement: `tests/` directory or inline `mod tests`
 
 **Java (JUnit)**
-- File naming: `<Name>Test.java`, placement `src/test/java/`
-- Methods: `@Test void testName()`
+- File naming: `<Name>Test.java`, placed in `src/test/java/`
+- Method: `@Test void testName()`
 - Assertions: `assertEquals(expected, actual)`
 - Exceptions: `assertThrows(ExpectedException.class, () -> ...)`
 - Mock: `@Mock` + `Mockito.when()`
 
-Use `write_file` to write test code into the project's test directory.
+Use `write_file` to write test code to corresponding test directory in project.
 
 ### Step 4: Execute Tests
 
-Select command by language, output JUnit XML uniformly:
+Select execution command by language, output JUnit XML uniformly:
 
 | Language | Command |
 |----------|---------|
-| Python | `<python_path> -m pytest <test_path> --junitxml=~/.qwenpaw/tmp/report.xml -v --tb=short` (when `toolchain.python_path` exists, use it instead of `python3`; otherwise fall back to `python3 -m pytest ...`) |
-| JS/TS | `npx jest --reporters=junit --outputFile=~/.qwenpaw/tmp/report.xml <test_path>` |
-| Go | `gotestsum --junitfile=~/.qwenpaw/tmp/report.xml -- <test_path>` |
-| Rust | `cargo nextest run --junit-path=~/.qwenpaw/tmp/report.xml <test_path>` |
-| Java | `mvn test -Dtest=<test_class> ; for f in target/surefire-reports/*.xml; do cp "$f" ~/.qwenpaw/tmp/report.xml; break; done 2>/dev/null; true` |
+| Python | `<python_path> -m pytest <test_path> --junitxml=~/.claude/tmp/report.xml -v --tb=short` (use `toolchain.python_path` instead of `python3` when it exists, otherwise fall back to `python3 -m pytest ...`) |
+| JS/TS | `npx jest --reporters=junit --outputFile=~/.claude/tmp/report.xml <test_path>` |
+| Go | `gotestsum --junitfile=~/.claude/tmp/report.xml -- <test_path>` |
+| Rust | `cargo nextest run --junit-path=~/.claude/tmp/report.xml <test_path>` |
+| Java | `mvn test -Dtest=<test_class> ; for f in target/surefire-reports/*.xml; do cp "$f" ~/.claude/tmp/report.xml; break; done 2>/dev/null; true` |
 
 ```bash
 execute_shell_command(
@@ -250,89 +238,89 @@ execute_shell_command(
 ```
 
 Notes:
-- `--junitxml` / `--outputFile` / `--junitfile` is required for the next step
-- `2>&1 | tail -200` prevents overly long output
-- `; true` ensures the shell command doesn't exit non-zero due to test failures
-- `cwd` must be the project root so import paths resolve correctly
+- `--junitxml` / `--outputFile` / `--junitfile` is required for next step parsing
+- `2>&1 | tail -200` prevents output from being too long
+- `; true` ensures shell command doesn't non-zero exit due to test failure
+- `cwd` must be project root directory to ensure import paths are correct
 
 ### Step 5: Parse Failures
 
 ```bash
 execute_shell_command(
-    command="python3 <skill_dir>/scripts/parse_failures.py --junitxml ~/.qwenpaw/tmp/report.xml --lang <lang> --history-file ~/.qwenpaw/failure_history.json --output ~/.qwenpaw/tmp/failures.json",
+    command="python3 <skill_dir>/scripts/parse_failures.py --junitxml ~/.claude/tmp/report.xml --lang <lang> --history-file ~/.claude/failure_history.json --output ~/.claude/tmp/failures.json",
     cwd="<skill_dir>"
 )
 ```
 
-Read `~/.qwenpaw/tmp/failures.json` to get:
-- **summary**: total, passed, failed, errors, build_errors, pass rate
-- **failures**: each failure's category, severity, suggestion
-- **all_cases**: status of all cases
-- **stop**: whether repeated failure signature detected (`true` means should stop iterating)
-- **repeat_count**: number of times the current failure signature has appeared
+Read `~/.claude/tmp/failures.json`, get:
+- **summary**: total, passed, failed, error, build_errors, pass rate
+- **failures**: classification, severity, suggestion for each failure
+- **all_cases**: all test case statuses
+- **stop**: whether repeated failure signature detected (`true` means should stop iteration)
+- **repeat_count**: number of times current failure signature has repeated
 
 ### Step 6: Analyze Failures
 
-Decide how to handle based on the `severity` field:
+Decide how to handle based on `severity` field:
 
-| severity | meaning | handling |
+| severity | Meaning | Handling |
 |----------|---------|----------|
-| `test_logic` | test code is wrong | fix test code |
-| `test_setup` | test environment/config issue | fix conftest or fixture |
-| `missing_plugin` | pytest plugin not installed | install plugin or use alternative |
-| `target_bug` | likely source code bug | **do NOT modify source**, report to user |
-| `test_env` | runtime environment issue | check dependencies, paths, permissions |
-| `build_error` | compiled language build failure | fix compilation errors and rebuild |
+| `test_logic` | Test code is wrong | Fix test code |
+| `test_setup` | Test environment/config issue | Fix conftest or fixture |
+| `missing_plugin` | pytest plugin not installed | Install plugin or use alternative |
+| `target_bug` | Suspected source bug | **Do not modify source**, report to user |
+| `test_env` | Runtime environment issue | Check dependency installation, path permissions |
+| `build_error` | Compiled language build failed | Fix compilation errors then rebuild |
 
-### Step 7: Auto-fix and Iterate (max 2 rounds)
+### Step 7: Auto Fix and Iterate (Maximum 2 rounds)
 
-1. **Check `stop` field**: if `stop=true` in `~/.qwenpaw/tmp/failures.json`, the failure
-   signature is the same as the previous round (same tests failing the same way).
-   **Stop iterating immediately** and report to the user
+1. **Check `stop` field**: If `~/.claude/tmp/failures.json` has `stop=true`, meaning
+   failure signature is same as last round (same test failed same way), **stop iteration immediately**,
+   summarize and report to user
 2. For `test_logic` / `test_setup` / `missing_plugin` failures, use `edit_file`
-   to fix test code (for `missing_plugin`, install the plugin or use alternative)
+   to fix test code (install plugin or use alternative for `missing_plugin`)
 3. For `build_error` failures, fix compilation errors (syntax/type/dependency)
-4. Re-run Step 4-5 (in round 2, only run last-failed tests for faster iteration)
-5. Repeat until all pass, or reach the **2-round limit**
-6. If failures remain after 2 rounds → stop and report to user
+4. Re-execute Step 4-5 (second round can only run last failed tests to speed up iteration)
+5. Repeat until all passed, or hit **2 round limit**
+6. Still have failures when hitting limit → stop, summarize and report to user
 
-**Hard rules:**
-- **When `stop=true`, must stop iterating** — do not fix tests further, report to user
-- **Do NOT modify target code** (source files), only fix test code
-- Suspected `target_bug` failures → report to user, let them decide
-- Do NOT delete test cases just to "make tests pass"
+**Hard rules**:
+- **Must stop iteration when `stop=true`**, don't keep fixing tests, directly report to user
+- **Do not modify target code** (source files), only fix test code
+- Suspected `target_bug` failure → report to user, let user decide
+- Don't delete test cases just to "make tests pass"
 
 ## Output Report
 
-After the flow completes, report to the user:
+After flow completes, report to user:
 1. **Language detection**: detected language, framework, toolchain status
-2. **Analysis summary**: which files were analyzed, how many functions/classes
-3. **Generated tests**: how many cases, which types covered
-4. **Execution results**: pass rate, failure count, compilation error count
-5. **Iteration rounds**: how many fix rounds were done
-6. **Remaining failures** (if any): listed by severity with suggestions
-7. **Suspected bugs** (if any): `target_bug` failures flagged for user confirmation
+2. **Analysis summary**: which files analyzed, how many functions/classes
+3. **Test generation**: how many test cases generated, what types covered
+4. **Execution result**: pass rate, number of failures, number of build errors
+5. **Iteration rounds**: how many rounds of fixes
+6. **Remaining failures** (if any): list by severity, with suggestions
+7. **Suspected bugs** (if any): mark `target_bug` failures, ask user to confirm
 
 ## Multi-language Architecture
 
 Three-layer architecture design:
-- **Layer 1 AST Analysis**: Python uses `ast` module (zero deps), other languages use tree-sitter packages
-- **Layer 2 Case Design**: language-agnostic shared algorithms (`case_design.py`)
-- **Layer 3 Language Adaptation**: test commands, failure rules, file placement (`registry.py`)
+- **Layer 1 AST Analysis**: Python uses `ast` module (zero dependency), other languages use tree-sitter standalone packages
+- **Layer 2 Test Case Design**: language-independent shared algorithm (`case_design.py`)
+- **Layer 3 Language Adapter**: test commands, failure rules, file placement (`registry.py`)
 
 `lang/` directory dynamically discovers adapters:
-- `lang/__init__.py` — register decorator + get_analyzer dispatch + dynamic `*_lang.py` scanning
+- `lang/__init__.py` — register decorator + get_analyzer dispatcher + dynamic scan of `*_lang.py`
 - `lang/base.py` — BaseAnalyzer abstract base class
-- `lang/case_design.py` — four case design shared algorithms
-- `lang/registry.py` — language → command/rules/file placement mapping
-- `lang/python_lang.py` — Python adapter (`ast` module, zero deps)
+- `lang/case_design.py` — four test case design shared algorithms
+- `lang/registry.py` — language → command/rule/file placement mapping
+- `lang/python_lang.py` — Python adapter (using `ast` module, zero dependency)
 - `lang/javascript_lang.py` — JavaScript adapter (tree-sitter-javascript)
 - `lang/typescript_lang.py` — TypeScript adapter (tree-sitter-typescript)
 - `lang/go_lang.py` — Go adapter (tree-sitter-go)
 - `lang/rust_lang.py` — Rust adapter (tree-sitter-rust)
 - `lang/java_lang.py` — Java adapter (tree-sitter-java)
-- To add a new language: create `lang/<lang>_lang.py`, implement `analyze`/`gen_cases`, register with `@register`
+- Add new language: create `lang/<lang>_lang.py`, implement `analyze`/`gen_cases`, register with `@register`
 
-> Non-Python languages require the corresponding tree-sitter package (see `scripts/requirements.txt`).
-> The `tree_sitter` field in `detect_lang.py` checks whether the dependency is available and prompts for installation if missing.
-> A single adapter failing to load does not affect other adapters (`__init__.py` has try/except error isolation).
+> Non-Python languages need to install corresponding tree-sitter package (see `scripts/requirements.txt`).
+> `detect_lang.py` `tree_sitter` field will detect if dependency is available, prompt for installation if missing.
+> Single adapter loading failure doesn't affect other adapters (`__init__.py` has try/except error isolation).

@@ -694,7 +694,7 @@ class TestHistoryTracking:
         """非 tmp/.qwenpaw 目录路径被拒绝。"""
         import pytest as _pytest
 
-        # 用 home 目录下的路径（不在 tmp 或 ~/.qwenpaw 下）
+        # 用 home 目录下的路径（不在 tmp 或 ~/.claude 下）
         home_path = os.path.expanduser("~/test_history_notmp.json")
         with _pytest.raises(ValueError):
             _validate_history_path(home_path)
@@ -709,17 +709,17 @@ class TestHistoryTracking:
         )
         assert validated.startswith(tmp_root)
 
-    def test_validate_history_path_accepts_qwenpaw_home(self):
-        """~/.qwenpaw/ 目录路径被接受（跨平台持久化）。"""
-        qwenpaw_path = os.path.expanduser("~/.qwenpaw/test_history.json")
-        validated = _validate_history_path(qwenpaw_path)
+    def test_validate_history_path_accepts_claude_home(self):
+        """~/.claude/ 目录路径被接受（跨平台持久化）。"""
+        claude_path = os.path.expanduser("~/.claude/test_history.json")
+        validated = _validate_history_path(claude_path)
         assert validated.startswith(
-            os.path.realpath(os.path.expanduser("~/.qwenpaw"))
+            os.path.realpath(os.path.expanduser("~/.claude"))
         )
 
     def test_validate_history_path_accepts_tilde_path(self):
         """~ 开头的路径被正确展开并接受。"""
-        validated = _validate_history_path("~/.qwenpaw/sub/test.json")
+        validated = _validate_history_path("~/.claude/sub/test.json")
         assert "~" not in validated  # ~ 被展开了
 
     def test_load_history_nonexistent_returns_empty(self, tmp_path):
@@ -775,7 +775,7 @@ class TestHistoryTracking:
         """连续两次相同失败 → 第二次 stop=true。"""
         import subprocess
 
-        history_path = os.path.expanduser("~/.qwenpaw/test_repeat_stop.json")
+        history_path = os.path.expanduser("~/.claude/test_repeat_stop.json")
         Path(history_path).parent.mkdir(parents=True, exist_ok=True)
         Path(history_path).write_text("[]", encoding="utf-8")
 
@@ -810,7 +810,7 @@ class TestHistoryTracking:
         """不同失败签名 → stop=false。"""
         import subprocess
 
-        history_path = os.path.expanduser("~/.qwenpaw/test_diff_stop.json")
+        history_path = os.path.expanduser("~/.claude/test_diff_stop.json")
         Path(history_path).parent.mkdir(parents=True, exist_ok=True)
         Path(history_path).write_text("[]", encoding="utf-8")
 
@@ -851,7 +851,7 @@ class TestHistoryTracking:
         """全部通过时清空历史文件。"""
         import subprocess
 
-        history_path = os.path.expanduser("~/.qwenpaw/test_clear_history.json")
+        history_path = os.path.expanduser("~/.claude/test_clear_history.json")
         Path(history_path).parent.mkdir(parents=True, exist_ok=True)
         # 预填充历史
         Path(history_path).write_text(
@@ -1010,7 +1010,7 @@ class TestValidateHistoryPath:
         assert result
 
     def test_home_qwenpaw_accepted(self, tmp_path, monkeypatch):
-        """~/.qwenpaw 路径合法。"""
+        """~/.claude 路径合法。"""
         fake_home = tmp_path / "home"
         (fake_home / ".qwenpaw").mkdir(parents=True)
         monkeypatch.setenv("HOME", str(fake_home))

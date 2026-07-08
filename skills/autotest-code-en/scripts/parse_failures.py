@@ -359,17 +359,20 @@ def _compute_failure_signature(failures: list[dict]) -> dict:
 
 
 def _validate_history_path(path: str) -> str:
-    """验证 history file 路径必须在 tmp 或 ~/.qwenpaw 目录下。"""
+    """验证 history file 路径必须在 tmp 或常见平台的 config 目录下。"""
     resolved = os.path.realpath(os.path.expanduser(path))
     valid_roots = [
         os.path.realpath(tempfile.gettempdir()),
         os.path.realpath("/tmp"),
         os.path.realpath("/var/tmp"),
+        os.path.realpath(os.path.expanduser("~/.claude")),
         os.path.realpath(os.path.expanduser("~/.qwenpaw")),
+        os.path.realpath(os.path.expanduser("~/.opencode")),
+        os.path.realpath(os.path.expanduser("~/.codex")),
     ]
     if not any(resolved.startswith(r) for r in valid_roots):
         raise ValueError(
-            f"history file must be under a temp directory or ~/.qwenpaw, "
+            f"history file must be under a temp directory or platform config directory, "
             f"got: {resolved}"
         )
     return resolved

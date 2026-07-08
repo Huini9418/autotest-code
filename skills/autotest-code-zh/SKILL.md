@@ -1,12 +1,8 @@
 ---
-name: auto_test
+name: autotest-code
 description: "当用户需要为项目代码生成测试时使用。支持 Python/JavaScript/TypeScript/Go/Rust/Java 多语言。触发表达包括「生成测试」「写单元测试」「为这个函数写 test」「auto test」「generate tests」「自动化测试」。覆盖分析→设计→生成→执行→修复→迭代的完整闭环。"
 metadata:
   builtin_skill_version: "2.0"
-  zhpaw:
-    emoji: "🧪"
-    requires:
-      bins: [python3, pytest]
 ---
 
 # 自动化测试生成（多语言）
@@ -40,12 +36,12 @@ Python / JavaScript / TypeScript / Go / Rust / Java。
 
 ```bash
 execute_shell_command(
-    command="mkdir -p ~/.qwenpaw/tmp/ && python3 <skill_dir>/scripts/discover_python_envs.py <target_path> --output ~/.qwenpaw/tmp/python_envs.json",
+    command="mkdir -p ~/.claude/tmp/ && python3 <skill_dir>/scripts/discover_python_envs.py <target_path> --output ~/.claude/tmp/python_envs.json",
     cwd="<skill_dir>"
 )
 ```
 
-读取 `~/.qwenpaw/tmp/python_envs.json`，将环境列表**展示给用户**：
+读取 `~/.claude/tmp/python_envs.json`，将环境列表**展示给用户**：
 
 ```
 检测到以下 Python 环境：
@@ -56,7 +52,7 @@ execute_shell_command(
 请选择要使用的 Python 环境（输入序号）：
 ```
 
-等待用户选择后，将选中的路径存入 `~/.qwenpaw/tmp/selected_python.txt`。
+等待用户选择后，将选中的路径存入 `~/.claude/tmp/selected_python.txt`。
 
 > 如果 `environments` 为空列表，跳过此步，回退到 `0b` 不传 `--python`。
 > `recommended` 字段是默认推荐项，可直接建议给用户。
@@ -65,14 +61,14 @@ execute_shell_command(
 
 ```bash
 execute_shell_command(
-    command="python3 <skill_dir>/scripts/detect_lang.py <target_path> --python <selected_python> --output ~/.qwenpaw/tmp/lang_detect.json && rm -f ~/.qwenpaw/failure_history.json",
+    command="python3 <skill_dir>/scripts/detect_lang.py <target_path> --python <selected_python> --output ~/.claude/tmp/lang_detect.json && rm -f ~/.claude/failure_history.json",
     cwd="<skill_dir>"
 )
 ```
 
 > 如果 `0a` 未执行或用户未选择，去掉 `--python <selected_python>` 参数即可。
 
-读取 `~/.qwenpaw/tmp/lang_detect.json`，确认：
+读取 `~/.claude/tmp/lang_detect.json`，确认：
 - **language**：目标语言（python/javascript/typescript/go/rust/java）
 - **framework**：测试框架（pytest/jest/vitest/go test/cargo nextest/maven）
 - **toolchain**：工具链是否可用，缺失时提示用户安装
@@ -91,7 +87,7 @@ execute_shell_command(
   - `hints`：安装提示列表
   - `hint`：安装提示字符串（向后兼容）
 
-开始前必须清空残留的失败历史文件：`rm -f ~/.qwenpaw/failure_history.json`
+开始前必须清空残留的失败历史文件：`rm -f ~/.claude/failure_history.json`
 （防止上次会话的残留数据导致 `stop=true` 误判）
 
 **插件使用约束**（Python）：
@@ -123,12 +119,12 @@ execute_shell_command(
 
 ```bash
 execute_shell_command(
-    command="python3 <skill_dir>/scripts/analyze.py <target_path> --lang <lang> --output ~/.qwenpaw/tmp/analysis.json",
+    command="python3 <skill_dir>/scripts/analyze.py <target_path> --lang <lang> --output ~/.claude/tmp/analysis.json",
     cwd="<skill_dir>"
 )
 ```
 
-读取 `~/.qwenpaw/tmp/analysis.json`，了解：
+读取 `~/.claude/tmp/analysis.json`，了解：
 - 函数签名（参数、类型注解、默认值）
 - 分支节点数量（if/for/while/try/except/BoolOp）
 - import 依赖
@@ -142,12 +138,12 @@ execute_shell_command(
 
 ```bash
 execute_shell_command(
-    command="python3 <skill_dir>/scripts/gen_cases.py --analysis-file ~/.qwenpaw/tmp/analysis.json --lang <lang> --output ~/.qwenpaw/tmp/cases.json",
+    command="python3 <skill_dir>/scripts/gen_cases.py --analysis-file ~/.claude/tmp/analysis.json --lang <lang> --output ~/.claude/tmp/cases.json",
     cwd="<skill_dir>"
 )
 ```
 
-读取 `~/.qwenpaw/tmp/cases.json`，获取结构化用例清单，包含四种类型：
+读取 `~/.claude/tmp/cases.json`，获取结构化用例清单，包含四种类型：
 - **equivalence_class**（等价类划分）：类型注解推导正常值
 - **boundary_value**（边界值分析）：按参数类型的边界值表
 - **exception_path**（异常路径）：分支数 > 0 时生成
@@ -178,7 +174,7 @@ execute_shell_command(
 - 异常：`with pytest.raises(ExpectedError):`
 - mock：`unittest.mock.patch`
 - 放置：`tests/` 目录
-- **插件使用**（检查 `~/.qwenpaw/tmp/lang_detect.json` 的 `pytest_plugins.plugins`）：
+- **插件使用**（检查 `~/.claude/tmp/lang_detect.json` 的 `pytest_plugins.plugins`）：
   - `mocker` fixture 不可用 → 用 `unittest.mock.patch` / `MagicMock`
   - `@given` 不可用 → 用 `@pytest.mark.parametrize` 参数化测试
   - `benchmark` fixture 不可用 → 用 `time.perf_counter()` 手动计时
@@ -186,7 +182,7 @@ execute_shell_command(
   - `freezer` fixture 不可用 → 用 `freezegun.freeze_time()` 或 `unittest.mock.patch`
   - `@responses.activate` 不可用 → 用 `unittest.mock.patch` 对 requests 打补丁
 - 异步测试：
-  - 检查 `~/.qwenpaw/tmp/lang_detect.json` 的 `pytest_plugins` 字段
+  - 检查 `~/.claude/tmp/lang_detect.json` 的 `pytest_plugins` 字段
   - `pytest_asyncio=true` → 用 `@pytest.mark.asyncio`
   - `pytest_asyncio=false` 但 `anyio=true` → 用 `@pytest.mark.anyio`
   - 两者都缺失 → **先告知用户安装**，不要生成异步测试
@@ -228,11 +224,11 @@ execute_shell_command(
 
 | 语言 | 命令 |
 |------|------|
-| Python | `<python_path> -m pytest <test_path> --junitxml=~/.qwenpaw/tmp/report.xml -v --tb=short`（当 `toolchain.python_path` 存在时用其替代 `python3`，否则回退到 `python3 -m pytest ...`） |
-| JS/TS | `npx jest --reporters=junit --outputFile=~/.qwenpaw/tmp/report.xml <test_path>` |
-| Go | `gotestsum --junitfile=~/.qwenpaw/tmp/report.xml -- <test_path>` |
-| Rust | `cargo nextest run --junit-path=~/.qwenpaw/tmp/report.xml <test_path>` |
-| Java | `mvn test -Dtest=<test_class> ; for f in target/surefire-reports/*.xml; do cp "$f" ~/.qwenpaw/tmp/report.xml; break; done 2>/dev/null; true` |
+| Python | `<python_path> -m pytest <test_path> --junitxml=~/.claude/tmp/report.xml -v --tb=short`（当 `toolchain.python_path` 存在时用其替代 `python3`，否则回退到 `python3 -m pytest ...`） |
+| JS/TS | `npx jest --reporters=junit --outputFile=~/.claude/tmp/report.xml <test_path>` |
+| Go | `gotestsum --junitfile=~/.claude/tmp/report.xml -- <test_path>` |
+| Rust | `cargo nextest run --junit-path=~/.claude/tmp/report.xml <test_path>` |
+| Java | `mvn test -Dtest=<test_class> ; for f in target/surefire-reports/*.xml; do cp "$f" ~/.claude/tmp/report.xml; break; done 2>/dev/null; true` |
 
 ```bash
 execute_shell_command(
@@ -251,12 +247,12 @@ execute_shell_command(
 
 ```bash
 execute_shell_command(
-    command="python3 <skill_dir>/scripts/parse_failures.py --junitxml ~/.qwenpaw/tmp/report.xml --lang <lang> --history-file ~/.qwenpaw/failure_history.json --output ~/.qwenpaw/tmp/failures.json",
+    command="python3 <skill_dir>/scripts/parse_failures.py --junitxml ~/.claude/tmp/report.xml --lang <lang> --history-file ~/.claude/failure_history.json --output ~/.claude/tmp/failures.json",
     cwd="<skill_dir>"
 )
 ```
 
-读取 `~/.qwenpaw/tmp/failures.json`，获取：
+读取 `~/.claude/tmp/failures.json`，获取：
 - **summary**：总数、通过数、失败数、错误数、build_errors、通过率
 - **failures**：每个失败的分类、severity、建议
 - **all_cases**：全部用例状态
@@ -278,7 +274,7 @@ execute_shell_command(
 
 ### Step 7: 自动修复与迭代（最多 2 轮）
 
-1. **检查 `stop` 字段**：如果 `~/.qwenpaw/tmp/failures.json` 中 `stop=true`，说明
+1. **检查 `stop` 字段**：如果 `~/.claude/tmp/failures.json` 中 `stop=true`，说明
    失败签名与上一轮相同（同样的测试以同样的方式失败），**立即停止迭代**，
    汇总报告给用户
 2. 对 `test_logic` / `test_setup` / `missing_plugin` 类失败，用 `edit_file`
