@@ -1,0 +1,20 @@
+{
+  "name": "autotest-code",
+  "owner": { "name": "Huini9418" },
+  "version": "1.0.0",
+  "description": "Automated test generation for Python / JavaScript / TypeScript / Go / Rust / Java",
+  "plugins": [
+    {
+      "name": "autotest-code",
+      "source": "./skills/autotest-code-zh",
+      "version": "1.0.0",
+      "keywords": ["testing", "unit-test", "python", "javascript", "typescript", "go", "rust", "java", "chinese"]
+    },
+    {
+      "name": "autotest-code-en",
+      "source": "./skills/autotest-code-en",
+      "version": "1.0.0",
+      "keywords": ["testing", "unit-test", "python", "javascript", "typescript", "go", "rust", "java", "english"]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "autotest-code",
+  "version": "1.0.0",
+  "description": "Automated test generation for Python / JavaScript / TypeScript / Go / Rust / Java",
+  "skills": [
+    {
+      "name": "autotest-code",
+      "source": "./skills/autotest-code-zh",
+      "description": "自动化测试生成（中文版）"
+    },
+    {
+      "name": "autotest-code-en",
+      "source": "./skills/autotest-code-en",
+      "description": "Automated test generation (English)"
+    }
+  ],
+  "repository": "https://github.com/Huini9418/autotest-code",
+  "keywords": ["testing", "unit-test", "python", "javascript", "typescript", "go", "rust", "java"]
+}

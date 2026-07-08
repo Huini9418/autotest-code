@@ -1,0 +1,23 @@
+# tree-sitter 依赖声明
+# Python 适配器使用标准库 ast 模块，无需任何外部依赖
+# 以下依赖仅在分析非 Python 语言时按需使用
+# 版本用 == 锁定，避免 API 不兼容
+
+# tree-sitter 核心（非 Python 语言必需）
+tree-sitter==0.26.0
+
+# 各语言独立包（按需安装，缺失时 detect_lang.py 会提示）
+# JavaScript 适配器
+tree-sitter-javascript==0.25.0
+
+# TypeScript 适配器
+tree-sitter-typescript==0.23.0
+
+# Go 适配器
+tree-sitter-go==0.23.0
+
+# Rust 适配器
+tree-sitter-rust==0.24.0
+
+# Java 适配器
+tree-sitter-java==0.23.0
