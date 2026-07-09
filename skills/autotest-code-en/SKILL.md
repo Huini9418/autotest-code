@@ -13,6 +13,11 @@ Python / JavaScript / TypeScript / Go / Rust / Java.
 > **Path convention**: All `scripts/` paths are relative to this skill directory.
 > When using `execute_shell_command`, set `cwd` to the skill directory,
 > or use absolute path `python3 <skill_dir>/scripts/xxx.py`.
+>
+> **Multi-platform support**: Temp files and history files can be placed in:
+> - System temp directory (`tempfile.gettempdir()`)
+> - User hidden directories like `~/.claude/`, `~/.qwenpaw/`, `~/.opencode/`, `~/.codex/`, etc.
+> - Any `~/.*` hidden directory is supported
 
 ## When to Use / When Not to Use
 

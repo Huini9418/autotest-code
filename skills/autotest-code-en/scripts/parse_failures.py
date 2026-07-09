@@ -359,29 +359,49 @@ def _compute_failure_signature(failures: list[dict]) -> dict:
 
 
 def _validate_history_path(path: str) -> str:
-    """验证 history file 路径必须在 tmp 或常见平台的 config 目录下。"""
-    resolved = os.path.realpath(os.path.expanduser(path))
-    valid_roots = [
-        os.path.realpath(tempfile.gettempdir()),
-        os.path.realpath("/tmp"),
-        os.path.realpath("/var/tmp"),
-        os.path.realpath(os.path.expanduser("~/.claude")),
-        os.path.realpath(os.path.expanduser("~/.qwenpaw")),
-        os.path.realpath(os.path.expanduser("~/.opencode")),
-        os.path.realpath(os.path.expanduser("~/.codex")),
+    """验证 history file 路径必须在 tmp 或特定平台目录下。"""
+    resolved = Path(os.path.expanduser(path)).resolve()
+
+    # 检查是否在临时目录下
+    temp_dirs = [
+        Path(tempfile.gettempdir()).resolve(),
+        Path("/tmp").resolve(),
+        Path("/var/tmp").resolve(),
     ]
-    if not any(resolved.startswith(r) for r in valid_roots):
+    in_temp = any(resolved.is_relative_to(d) for d in temp_dirs)
+
+    # 检查是否在特定平台目录下
+    in_allowed_dir = False
+    try:
+        user_home = Path.home().resolve()
+        if resolved.is_relative_to(user_home):
+            # 获取相对于 user_home 的路径部分
+            relative_parts = resolved.relative_to(user_home).parts
+            if relative_parts:
+                # 只允许特定的平台目录
+                first_part = relative_parts[0]
+                allowed_dirs = {".claude", ".qwenpaw", ".opencode", ".codex"}
+                if first_part in allowed_dirs:
+                    in_allowed_dir = True
+    except RuntimeError:
+        # 无法获取 home 目录时，只允许 tmp 目录
+        pass
+
+    if not (in_temp or in_allowed_dir):
         raise ValueError(
-            f"history file must be under a temp directory or platform config directory, "
-            f"got: {resolved}"
+            f"history file must be under a temp directory or one of: "
+            f"~/.claude, ~/.qwenpaw, ~/.opencode, ~/.codex, got: {resolved}"
         )
-    return resolved
+    return str(resolved)
 
 
-def _load_history(history_path: str) -> list[dict]:
+def _load_history(history_path: str, already_validated: bool = False) -> list[dict]:
     """加载历史失败签名。路径不存在时返回空列表。"""
     try:
-        validated = _validate_history_path(history_path)
+        if already_validated:
+            validated = history_path
+        else:
+            validated = _validate_history_path(history_path)
         if os.path.exists(validated):
             return json.loads(Path(validated).read_text(encoding="utf-8"))
     except (ValueError, json.JSONDecodeError, OSError):
@@ -393,7 +413,7 @@ def _append_history(history_path: str, sig_info: dict) -> list[dict]:
     """追加签名到历史文件，返回更新后的历史列表。上限 10 条。"""
     try:
         validated = _validate_history_path(history_path)
-        history = _load_history(validated)
+        history = _load_history(validated, already_validated=True)
         history.append(
             {
                 "signature": sig_info["signature"],

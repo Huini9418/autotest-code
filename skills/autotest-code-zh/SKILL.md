@@ -13,6 +13,11 @@ Python / JavaScript / TypeScript / Go / Rust / Java。
 > **路径约定：** 所有 `scripts/` 路径均相对于此技能目录。
 > 用 `execute_shell_command` 运行时，设 `cwd` 为技能目录，
 > 或用绝对路径 `python3 <skill_dir>/scripts/xxx.py`。
+>
+> **多平台支持：** 临时文件和历史文件可以放在以下位置：
+> - 系统临时目录（`tempfile.gettempdir()`）
+> - 用户隐藏目录，如 `~/.claude/`、`~/.qwenpaw/`、`~/.opencode/`、`~/.codex/` 等
+> - 任意 `~/.*` 隐藏目录都支持
 
 ## 什么时候用 / 什么时候不用
 

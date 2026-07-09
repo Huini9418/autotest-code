@@ -16,28 +16,20 @@ autotest-code/
       SKILL.md
       scripts/
   tests/              # 单元测试（开发用，不随 skill 分发）
-    autotest-code-zh/
-    autotest-code-en/
   pyproject.toml      # pytest 配置
 ```
 
 ## Running Tests
 
 ```bash
-# zh 套件（开发时主要跑这个）
-python3 -m pytest tests/autotest-code-zh/ -v
-
-# en 套件（确认一致性）
-python3 -m pytest tests/autotest-code-en/ -v
-
-# 两套一起（注意：zh/en conftest 冲突，必须分开运行）
-python3 -m pytest tests/autotest-code-zh/ -q && python3 -m pytest tests/autotest-code-en/ -q
+# 运行所有测试
+python3 -m pytest tests/ -v
 
 # 单个文件
-python3 -m pytest tests/autotest-code-zh/test_python_adapter.py -v
+python3 -m pytest tests/test_python_adapter.py -v
 
 # 按 marker
-python3 -m pytest tests/autotest-code-zh/ -m "not slow"
+python3 -m pytest tests/ -m "not slow"
 ```
 
 ## Key Architecture
@@ -48,14 +40,13 @@ python3 -m pytest tests/autotest-code-zh/ -m "not slow"
 
 ## Sync Rule
 
-`skills/autotest-code-zh/scripts/` 和 `skills/autotest-code-en/scripts/` **必须完全相同**（文件内容一致）。`tests/autotest-code-zh/` 和 `tests/autotest-code-en/` 也必须完全相同。每次改 zh 后同步到 en：
+`skills/autotest-code-zh/scripts/` 和 `skills/autotest-code-en/scripts/` **必须完全相同**（文件内容一致）。每次改 zh 后同步到 en：
 
 ```bash
 cp skills/autotest-code-zh/scripts/<file> skills/autotest-code-en/scripts/<file>
-cp tests/autotest-code-zh/<file>          tests/autotest-code-en/<file>
 ```
 
-一致性由 `tests/auto-test-zh/test_consistency.py` 自动校验。
+一致性由 `tests/test_consistency.py` 自动校验。
 
 ## Supported Languages
 
