@@ -212,6 +212,8 @@ class RustAnalyzer(BaseAnalyzer):
         args = self._extract_params(node)
         returns = self._extract_return_type(node)
         branches = self._count_branches(node)
+        branches_info = self._extract_branches_info(node)
+        returns_info = self._extract_returns_info(node)
         is_async = self._is_async(node)
 
         return {
@@ -220,9 +222,11 @@ class RustAnalyzer(BaseAnalyzer):
             "line": node.start_point[0] + 1,
             "args": args,
             "returns": returns,
+            "returns_info": returns_info,
             "decorators": [],
             "docstring": None,
             "branches": branches,
+            "branches_info": branches_info,
             "complexity": 1 + branches,
             "is_async": is_async,
         }
@@ -332,7 +336,7 @@ class RustAnalyzer(BaseAnalyzer):
     def _count_branches(self, node) -> int:
         """统计分支节点数，不下钻嵌套函数定义。
 
-        计入：if/for/while/loop/match/try
+        计入：if/for/while/loop/match/&&/||
         """
         branch_types = {
             "if_expression",
@@ -357,8 +361,499 @@ class RustAnalyzer(BaseAnalyzer):
                 count += 1
             elif child.type == "match_arm":
                 count += 1
+            elif child.type == "binary_expression":
+                # && / || 各算 1 个决策点
+                for bc in child.children:
+                    if bc.type in ("&&", "||"):
+                        count += 1
             count += self._count_branches(child)
         return count
+
+    # ------------------------------------------------------------------
+    # branches_info / returns_info 提取（用例设计增强）
+    # ------------------------------------------------------------------
+
+    _NESTED_FUNC_TYPES = frozenset({
+        "function_item",
+        "function_signature_item",
+        "closure_expression",
+        "struct_item",
+        "impl_item",
+        "trait_item",
+    })
+
+    def _text(self, node) -> str:
+        return node.text.decode("utf-8")
+
+    def _extract_branches_info(self, func_node) -> list[dict]:
+        """提取分支详细信息。不下钻嵌套函数。"""
+        out: list[dict] = []
+        self._collect_branches_info(func_node, out, depth=0)
+        return out
+
+    def _collect_branches_info(self, node, out, depth=0):
+        if depth > 200:
+            return
+        for child in node.children:
+            ctype = child.type
+            if ctype in self._NESTED_FUNC_TYPES:
+                continue
+            if ctype == "if_expression":
+                cond = self._extract_if_condition(child)
+                out.append({
+                    "type": "if",
+                    "condition": cond,
+                    "line": child.start_point[0] + 1,
+                })
+            elif ctype in ("for_expression",):
+                cond = self._extract_for_condition(child)
+                out.append({
+                    "type": "for",
+                    "condition": cond,
+                    "line": child.start_point[0] + 1,
+                })
+            elif ctype in ("while_expression", "loop_expression"):
+                cond = self._extract_while_condition(child)
+                out.append({
+                    "type": "while",
+                    "condition": cond,
+                    "line": child.start_point[0] + 1,
+                })
+            elif ctype == "match_arm":
+                pat = self._extract_match_pattern(child)
+                out.append({
+                    "type": "match_case",
+                    "condition": pat,
+                    "line": child.start_point[0] + 1,
+                })
+            elif ctype == "binary_expression":
+                for bc in child.children:
+                    if bc.type in ("&&", "||"):
+                        out.append({
+                            "type": "boolop",
+                            "condition": self._text(child),
+                            "op": bc.type,
+                            "line": child.start_point[0] + 1,
+                        })
+                        break
+            self._collect_branches_info(child, out, depth + 1)
+
+    def _extract_if_condition(self, if_node) -> str:
+        """Rust 的 if_expression: 'if' <cond> <block> ['else' ...]"""
+        after_if = False
+        for c in if_node.children:
+            if c.type == "if":
+                after_if = True
+                continue
+            if not after_if:
+                continue
+            if c.type == "block":
+                break
+            # 第一个非 'if'、非空的表达式就是条件
+            return self._text(c)
+        return ""
+
+    def _extract_for_condition(self, for_node) -> str:
+        """Rust 的 for i in xs { }"""
+        parts = []
+        after_for = False
+        for c in for_node.children:
+            if c.type == "for":
+                after_for = True
+                continue
+            if not after_for:
+                continue
+            if c.type == "block":
+                break
+            parts.append(self._text(c))
+        return " ".join(parts).strip()
+
+    def _extract_while_condition(self, w_node) -> str:
+        after_kw = False
+        for c in w_node.children:
+            if c.type in ("while", "loop"):
+                after_kw = True
+                continue
+            if not after_kw:
+                continue
+            if c.type == "block":
+                break
+            return self._text(c)
+        return ""
+
+    def _extract_match_pattern(self, arm_node) -> str:
+        for c in arm_node.children:
+            if c.type == "match_pattern":
+                return self._text(c)
+        return ""
+
+    def _extract_returns_info(self, func_node) -> list[dict]:
+        """提取函数中所有 return 及其守卫条件。
+
+        Rust 特色：
+            - 显式 return 语句：`return_expression`
+            - 隐式 return：block 最后一个表达式
+            - panic! / unimplemented! 视为 raise
+            - `return Err(...)` 是错误路径（但仍归为 return）
+        """
+        out: list[dict] = []
+        body = None
+        for c in func_node.children:
+            if c.type == "block":
+                body = c
+                break
+        if body is None:
+            return out
+
+        # 找到 block 中所有非标点子节点
+        stmts = [
+            c for c in body.children
+            if c.type not in ("{", "}")
+        ]
+        self._collect_returns_from_stmts_with_tail(
+            stmts, out, guards=[], depth=0
+        )
+        return out
+
+    def _collect_returns_from_stmts_with_tail(
+        self, stmts, out, guards, depth=0
+    ):
+        """按顺序处理语句列表：最后一条是 tail (隐式 return)，
+        并追踪 early return / early panic 后累积 negation guard。
+        """
+        implicit: list[str] = []
+        for i, stmt in enumerate(stmts):
+            is_last = (i == len(stmts) - 1)
+            effective_guards = guards + implicit
+            self._collect_returns_from_stmt(
+                stmt, out, effective_guards, depth, is_tail=is_last
+            )
+            # 检测 early return / early panic 模式
+            cond = self._get_early_return_cond(stmt)
+            if cond is not None:
+                implicit.append(f"not ({cond})")
+
+    def _get_early_return_cond(self, stmt):
+        """如果 stmt 是 `if (cond) { ... 必然 return/panic ... }` 且无 else，
+        返回 cond；否则返回 None。
+        """
+        # Rust 里可能是 expression_statement > if_expression
+        if_node = None
+        if stmt.type == "expression_statement":
+            for c in stmt.children:
+                if c.type == "if_expression":
+                    if_node = c
+                    break
+        elif stmt.type == "if_expression":
+            if_node = stmt
+        if if_node is None:
+            return None
+        # 检查是否无 else
+        has_else = any(
+            c.type == "else_clause" for c in if_node.children
+        )
+        if has_else:
+            return None
+        # 找 then block
+        then_block = None
+        for c in if_node.children:
+            if c.type == "block":
+                then_block = c
+                break
+        if then_block is None:
+            return None
+        if not self._block_terminates(then_block):
+            return None
+        return self._extract_if_condition(if_node)
+
+    def _block_terminates(self, block_node) -> bool:
+        """判断 Rust block 是否必然以 return_expression / panic! / unreachable! 结束。"""
+        if block_node.type != "block":
+            return False
+        stmts = [
+            c for c in block_node.children
+            if c.type not in ("{", "}")
+        ]
+        if not stmts:
+            return False
+        last = stmts[-1]
+        # 显式 return
+        if last.type == "return_expression":
+            return True
+        # expression_statement 包 return_expression / macro (panic!)
+        if last.type == "expression_statement":
+            for c in last.children:
+                if c.type == "return_expression":
+                    return True
+                if c.type == "macro_invocation":
+                    name = self._extract_macro_name(c)
+                    if name in (
+                        "panic", "unimplemented",
+                        "todo", "unreachable",
+                    ):
+                        return True
+        return False
+
+    def _process_block_as_tail(self, block_node, out, guards, depth):
+        """处理 block，最后一个表达式视为隐式 return，同时支持 early return。"""
+        if block_node.type != "block":
+            self._collect_returns_from_stmt(
+                block_node, out, guards, depth, is_tail=True
+            )
+            return
+        stmts = [
+            c for c in block_node.children
+            if c.type not in ("{", "}")
+        ]
+        self._collect_returns_from_stmts_with_tail(
+            stmts, out, guards, depth
+        )
+
+    def _collect_returns_from_stmt(
+        self, stmt, out, guards, depth=0, is_tail=False
+    ):
+        if depth > 200:
+            return
+        stype = stmt.type
+        if stype in self._NESTED_FUNC_TYPES:
+            return
+
+        # 显式 return
+        if stype == "return_expression":
+            value = self._extract_return_value(stmt)
+            # 检查是不是 return Err(...)
+            kind, exc_type = self._classify_return_value(value)
+            entry = {
+                "value": value,
+                "kind": kind,
+                "guard": " and ".join(guards) if guards else "",
+                "line": stmt.start_point[0] + 1,
+            }
+            if exc_type:
+                entry["exception_type"] = exc_type
+            out.append(entry)
+            return
+
+        # expression_statement 包装的 return_expression / panic! / if_expression / match_expression
+        if stype == "expression_statement":
+            # 判断是否有分号（有则不是 tail）
+            has_semicolon = any(c.type == ";" for c in stmt.children)
+            effective_tail = is_tail and not has_semicolon
+            for c in stmt.children:
+                if c.type == "return_expression":
+                    self._collect_returns_from_stmt(
+                        c, out, guards, depth, is_tail=False
+                    )
+                    return
+                if c.type == "macro_invocation":
+                    macro = self._extract_macro_name(c)
+                    if macro in ("panic", "unimplemented", "todo", "unreachable"):
+                        out.append({
+                            "value": self._text(c),
+                            "kind": "raise",
+                            "exception_type": f"{macro}!",
+                            "guard": (
+                                " and ".join(guards) if guards else ""
+                            ),
+                            "line": stmt.start_point[0] + 1,
+                        })
+                        return
+                if c.type == "if_expression":
+                    self._collect_returns_from_stmt(
+                        c, out, guards, depth, is_tail=effective_tail
+                    )
+                    return
+                if c.type == "match_expression":
+                    self._collect_returns_from_stmt(
+                        c, out, guards, depth, is_tail=effective_tail
+                    )
+                    return
+                # 其他表达式作为 tail 就是隐式 return
+                if effective_tail and c.type not in (";",):
+                    value = self._text(c)
+                    kind, exc_type = self._classify_return_value(value)
+                    entry = {
+                        "value": value,
+                        "kind": kind,
+                        "guard": " and ".join(guards) if guards else "",
+                        "line": c.start_point[0] + 1,
+                    }
+                    if exc_type:
+                        entry["exception_type"] = exc_type
+                    out.append(entry)
+                    return
+            return
+
+        # if 表达式作为 tail: 每个分支是隐式 return
+        if stype == "if_expression":
+            cond = self._extract_if_condition(stmt)
+            # 找 then_block 和 else 部分
+            then_block = None
+            else_part = None
+            after_cond = False
+            for c in stmt.children:
+                if c.type == "if":
+                    continue
+                if c.type == "block" and then_block is None:
+                    then_block = c
+                    after_cond = True
+                elif c.type == "else_clause":
+                    for ec in c.children:
+                        if ec.type == "else":
+                            continue
+                        else_part = ec
+                        break
+                elif not after_cond:
+                    # 这是条件表达式
+                    continue
+
+            if then_block is not None:
+                # is_tail 决定 then_block 的最后表达式是不是隐式 return
+                if is_tail:
+                    self._process_block_as_tail(
+                        then_block, out, guards + [cond], depth + 1
+                    )
+                else:
+                    self._process_block_no_tail(
+                        then_block, out, guards + [cond], depth + 1
+                    )
+            if else_part is not None:
+                neg = f"not ({cond})"
+                if else_part.type == "if_expression":
+                    self._collect_returns_from_stmt(
+                        else_part, out, guards + [neg], depth + 1,
+                        is_tail=is_tail
+                    )
+                elif else_part.type == "block":
+                    if is_tail:
+                        self._process_block_as_tail(
+                            else_part, out, guards + [neg], depth + 1
+                        )
+                    else:
+                        self._process_block_no_tail(
+                            else_part, out, guards + [neg], depth + 1
+                        )
+            return
+
+        # match 表达式作为 tail: 每个 arm 是一个 return
+        if stype == "match_expression":
+            # match 表达式很复杂，简化处理：只在 tail 时提取 arm 值
+            if is_tail:
+                self._collect_match_returns(
+                    stmt, out, guards, depth
+                )
+            return
+
+        # 循环体：内部 return 视为无额外守卫
+        if stype in (
+            "for_expression", "while_expression", "loop_expression"
+        ):
+            for c in stmt.children:
+                if c.type == "block":
+                    self._process_block_no_tail(
+                        c, out, guards, depth + 1
+                    )
+            return
+
+        # block 中作为 tail 的裸表达式 = 隐式 return
+        if is_tail and stype not in (
+            "let_declaration", "expression_statement", "empty_statement"
+        ):
+            value = self._text(stmt)
+            kind, exc_type = self._classify_return_value(value)
+            entry = {
+                "value": value,
+                "kind": kind,
+                "guard": " and ".join(guards) if guards else "",
+                "line": stmt.start_point[0] + 1,
+            }
+            if exc_type:
+                entry["exception_type"] = exc_type
+            out.append(entry)
+            return
+
+    def _process_block_no_tail(self, block_node, out, guards, depth):
+        """处理 block，最后一个表达式不视为隐式 return。"""
+        if block_node.type != "block":
+            self._collect_returns_from_stmt(
+                block_node, out, guards, depth, is_tail=False
+            )
+            return
+        for c in block_node.children:
+            if c.type in ("{", "}"):
+                continue
+            self._collect_returns_from_stmt(
+                c, out, guards, depth, is_tail=False
+            )
+
+    def _collect_match_returns(self, match_node, out, guards, depth):
+        """处理 match 表达式的所有 arm。"""
+        for c in match_node.children:
+            if c.type == "match_block":
+                for arm in c.children:
+                    if arm.type == "match_arm":
+                        pat = self._extract_match_pattern(arm)
+                        arm_guard = f"match => {pat}"
+                        # 找 arm 的 body（可能是表达式或 block）
+                        body = None
+                        for ac in arm.children:
+                            if ac.type not in (
+                                "match_pattern", "=>", ",",
+                            ):
+                                body = ac
+                                break
+                        if body is None:
+                            continue
+                        if body.type == "block":
+                            self._process_block_as_tail(
+                                body, out, guards + [arm_guard], depth + 1
+                            )
+                        else:
+                            # 表达式作为返回值
+                            value = self._text(body)
+                            kind, exc_type = (
+                                self._classify_return_value(value)
+                            )
+                            entry = {
+                                "value": value,
+                                "kind": kind,
+                                "guard": " and ".join(
+                                    guards + [arm_guard]
+                                ),
+                                "line": body.start_point[0] + 1,
+                            }
+                            if exc_type:
+                                entry["exception_type"] = exc_type
+                            out.append(entry)
+
+    def _extract_return_value(self, ret_node) -> str:
+        """return_expression: `return <expr>` 或裸 `return`"""
+        skip = {"return", ";"}
+        for c in ret_node.children:
+            if c.type not in skip:
+                return self._text(c)
+        return "()"
+
+    def _classify_return_value(self, value: str) -> tuple:
+        """判断返回值是普通 return 还是错误路径。
+
+        Rust 里 `Err(...)` 是错误路径，但仍属于 return（不是 panic）。
+        为了让 case_design 生成更好的 expected，我们把 Err 也标记出来。
+
+        Returns: (kind, exception_type or None)
+        """
+        stripped = value.strip()
+        if stripped.startswith("Err(") or stripped.startswith("Err {"):
+            # Rust 的错误值 —— 标为 return 但记录额外信息
+            return ("return", None)
+        return ("return", None)
+
+    def _extract_macro_name(self, macro_node) -> str:
+        """从 macro_invocation 提取宏名。"""
+        for c in macro_node.children:
+            if c.type == "identifier":
+                return self._text(c)
+        return ""
 
     def _iter_children(self, node):
         return node.children

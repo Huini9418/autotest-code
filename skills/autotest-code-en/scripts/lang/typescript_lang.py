@@ -244,6 +244,8 @@ class TypescriptAnalyzer(BaseAnalyzer):
         args = self._extract_args(node)
         returns = self._extract_return_type(node)
         branches = self._count_branches(node)
+        branches_info = self._extract_branches_info(node)
+        returns_info = self._extract_returns_info(node)
         is_async = self._is_async(node)
 
         return {
@@ -252,9 +254,11 @@ class TypescriptAnalyzer(BaseAnalyzer):
             "line": node.start_point[0] + 1,
             "args": args,
             "returns": returns,
+            "returns_info": returns_info,
             "decorators": [],
             "docstring": None,
             "branches": branches,
+            "branches_info": branches_info,
             "complexity": 1 + branches,
             "is_async": is_async,
         }
@@ -491,6 +495,426 @@ class TypescriptAnalyzer(BaseAnalyzer):
                         count += 1
             count += self._count_branches(child)
         return count
+
+    # ------------------------------------------------------------------
+    # branches_info / returns_info 提取（用例设计增强）
+    # 与 JavaScript 适配器逻辑一致（TS 是 JS 的超集，控制流语法完全相同）
+    # ------------------------------------------------------------------
+
+    _NESTED_FUNC_TYPES = frozenset({
+        "function_declaration",
+        "function_expression",
+        "arrow_function",
+        "generator_function",
+        "generator_function_declaration",
+        "method_definition",
+        "class_declaration",
+        # TS 特有
+        "abstract_method_signature",
+    })
+
+    def _text(self, node) -> str:
+        """节点源码文本。"""
+        return node.text.decode("utf-8")
+
+    def _condition_from_paren(self, paren_node) -> str:
+        """从 parenthesized_expression 中提取内层表达式源码。"""
+        for c in paren_node.children:
+            if c.type not in ("(", ")"):
+                return self._text(c)
+        raw = self._text(paren_node).strip()
+        if raw.startswith("(") and raw.endswith(")"):
+            return raw[1:-1].strip()
+        return raw
+
+    def _extract_branches_info(self, func_node) -> list[dict]:
+        """提取分支详细信息（条件表达式、位置）。不下钻嵌套函数/类。"""
+        out: list[dict] = []
+        self._collect_branches_info(func_node, out, depth=0)
+        return out
+
+    def _collect_branches_info(self, node, out, depth=0):
+        if depth > 200:
+            return
+        for child in node.children:
+            ctype = child.type
+            if ctype in self._NESTED_FUNC_TYPES:
+                continue
+            if ctype == "if_statement":
+                cond = self._extract_if_condition(child)
+                out.append({
+                    "type": "if",
+                    "condition": cond,
+                    "line": child.start_point[0] + 1,
+                })
+            elif ctype in ("for_statement", "for_in_statement"):
+                cond = self._extract_for_condition(child)
+                out.append({
+                    "type": "for",
+                    "condition": cond,
+                    "line": child.start_point[0] + 1,
+                })
+            elif ctype in ("while_statement", "do_statement"):
+                cond = self._extract_while_condition(child)
+                out.append({
+                    "type": "while",
+                    "condition": cond,
+                    "line": child.start_point[0] + 1,
+                })
+            elif ctype == "catch_clause":
+                out.append({
+                    "type": "except",
+                    "condition": "Error",
+                    "exception_type": "Error",
+                    "line": child.start_point[0] + 1,
+                })
+            elif ctype == "ternary_expression":
+                cond = self._extract_ternary_condition(child)
+                out.append({
+                    "type": "ifexp",
+                    "condition": cond,
+                    "line": child.start_point[0] + 1,
+                })
+            elif ctype in ("switch_case",):
+                case_expr = self._extract_switch_case_expr(child)
+                out.append({
+                    "type": "match_case",
+                    "condition": case_expr,
+                    "line": child.start_point[0] + 1,
+                })
+            elif ctype == "switch_default":
+                out.append({
+                    "type": "match_case",
+                    "condition": "default",
+                    "line": child.start_point[0] + 1,
+                })
+            elif ctype == "binary_expression":
+                for bc in child.children:
+                    if bc.type in ("&&", "||"):
+                        out.append({
+                            "type": "boolop",
+                            "condition": self._text(child),
+                            "op": bc.type,
+                            "line": child.start_point[0] + 1,
+                        })
+                        break
+            self._collect_branches_info(child, out, depth + 1)
+
+    def _extract_if_condition(self, if_node) -> str:
+        for c in if_node.children:
+            if c.type == "parenthesized_expression":
+                return self._condition_from_paren(c)
+        return ""
+
+    def _extract_for_condition(self, for_node) -> str:
+        raw = self._text(for_node).splitlines()[0]
+        start = raw.find("(")
+        end = raw.rfind(")")
+        if start >= 0 and end > start:
+            return raw[start + 1:end].strip()
+        return raw.strip()
+
+    def _extract_while_condition(self, while_node) -> str:
+        for c in while_node.children:
+            if c.type == "parenthesized_expression":
+                return self._condition_from_paren(c)
+        return ""
+
+    def _extract_ternary_condition(self, tern_node) -> str:
+        for c in tern_node.children:
+            if c.type not in ("?", ":"):
+                return self._text(c)
+        return ""
+
+    def _extract_switch_case_expr(self, case_node) -> str:
+        for c in case_node.children:
+            if c.type not in ("case", ":"):
+                return self._text(c)
+        return ""
+
+    def _extract_returns_info(self, func_node) -> list[dict]:
+        """提取函数中所有 return / throw 及其守卫条件。"""
+        out: list[dict] = []
+        body = None
+        for c in func_node.children:
+            if c.type == "statement_block":
+                body = c
+                break
+        if body is None:
+            # 箭头函数 x => x + 1（表达式体）
+            for c in func_node.children:
+                if c.type not in (
+                    "async", "=>", "identifier", "formal_parameters",
+                    "(", ")", "function", "type_annotation",
+                    "type_parameters",
+                ):
+                    out.append({
+                        "value": self._text(c),
+                        "kind": "return",
+                        "guard": "",
+                        "line": c.start_point[0] + 1,
+                    })
+                    return out
+            return out
+
+        # 从 body 收集 statements
+        stmts = [s for s in body.children if s.type not in ("{", "}")]
+        self._collect_returns_from_body(stmts, out, guards=[], depth=0)
+        return out
+
+    def _collect_returns_from_body(self, stmts, out, guards, depth=0):
+        """按顺序处理语句列表，early-return 后累积 negation guard。"""
+        implicit: list[str] = []
+        for stmt in stmts:
+            self._collect_returns_from_stmt(
+                stmt, out, guards + implicit, depth
+            )
+            if stmt.type == "if_statement":
+                if self._is_if_without_else(stmt):
+                    if self._if_then_terminates(stmt):
+                        cond = self._extract_if_condition(stmt)
+                        implicit.append(f"not ({cond})")
+
+    def _is_if_without_else(self, if_node) -> bool:
+        for c in if_node.children:
+            if c.type == "else_clause":
+                return False
+        return True
+
+    def _if_then_terminates(self, if_node) -> bool:
+        then_body = self._find_if_then_body(if_node)
+        if then_body is None:
+            return False
+        return self._body_terminates(then_body)
+
+    def _find_if_then_body(self, if_node):
+        after_paren = False
+        for c in if_node.children:
+            if c.type == "parenthesized_expression":
+                after_paren = True
+                continue
+            if not after_paren:
+                continue
+            if c.type == "else_clause":
+                return None
+            return c
+        return None
+
+    def _body_terminates(self, body_node) -> bool:
+        if body_node.type in ("return_statement", "throw_statement"):
+            return True
+        if body_node.type == "statement_block":
+            stmts = [
+                s for s in body_node.children
+                if s.type not in ("{", "}")
+            ]
+            if not stmts:
+                return False
+            last = stmts[-1]
+            if last.type in ("return_statement", "throw_statement"):
+                return True
+            if last.type == "if_statement":
+                if self._is_if_without_else(last):
+                    return False
+                then_body = self._find_if_then_body(last)
+                else_body = self._find_else_body(last)
+                if then_body and else_body:
+                    return (
+                        self._body_terminates(then_body)
+                        and self._body_terminates(else_body)
+                    )
+        return False
+
+    def _find_else_body(self, if_node):
+        for c in if_node.children:
+            if c.type == "else_clause":
+                for ec in c.children:
+                    if ec.type == "else":
+                        continue
+                    return ec
+        return None
+
+    def _process_if_body(self, node, out, guards, depth):
+        if node.type == "statement_block":
+            stmts = [
+                s for s in node.children if s.type not in ("{", "}")
+            ]
+            self._collect_returns_from_body(
+                stmts, out, guards, depth
+            )
+        else:
+            self._collect_returns_from_stmt(
+                node, out, guards, depth
+            )
+
+    def _collect_returns_from_stmt(self, stmt, out, guards, depth=0):
+        if depth > 200:
+            return
+        stype = stmt.type
+        if stype in self._NESTED_FUNC_TYPES:
+            return
+
+        if stype == "return_statement":
+            value = self._extract_return_value(stmt)
+            out.append({
+                "value": value,
+                "kind": "return",
+                "guard": " and ".join(guards) if guards else "",
+                "line": stmt.start_point[0] + 1,
+            })
+            return
+        if stype == "throw_statement":
+            value = self._extract_throw_value(stmt)
+            exc_type = self._extract_throw_type(stmt)
+            out.append({
+                "value": value,
+                "kind": "raise",
+                "exception_type": exc_type,
+                "guard": " and ".join(guards) if guards else "",
+                "line": stmt.start_point[0] + 1,
+            })
+            return
+
+        if stype == "if_statement":
+            cond = self._extract_if_condition(stmt)
+            then_stmt = None
+            else_stmt = None
+            after_paren = False
+            for c in stmt.children:
+                if c.type == "parenthesized_expression":
+                    after_paren = True
+                    continue
+                if not after_paren:
+                    continue
+                if c.type == "else_clause":
+                    for ec in c.children:
+                        if ec.type == "else":
+                            continue
+                        else_stmt = ec
+                        break
+                    break
+                if then_stmt is None:
+                    then_stmt = c
+
+            if then_stmt is not None:
+                self._process_if_body(
+                    then_stmt, out, guards + [cond], depth + 1
+                )
+            if else_stmt is not None:
+                neg = f"not ({cond})"
+                if else_stmt.type == "if_statement":
+                    self._collect_returns_from_stmt(
+                        else_stmt, out, guards + [neg], depth + 1
+                    )
+                else:
+                    self._process_if_body(
+                        else_stmt, out, guards + [neg], depth + 1
+                    )
+            return
+
+        if stype == "try_statement":
+            for c in stmt.children:
+                if c.type == "statement_block":
+                    for s in c.children:
+                        if s.type in ("{", "}"):
+                            continue
+                        self._collect_returns_from_stmt(
+                            s, out, guards, depth + 1
+                        )
+                elif c.type == "catch_clause":
+                    for s in c.children:
+                        if s.type == "statement_block":
+                            for inner in s.children:
+                                if inner.type in ("{", "}"):
+                                    continue
+                                self._collect_returns_from_stmt(
+                                    inner, out,
+                                    guards + ["except Error"], depth + 1,
+                                )
+                elif c.type == "finally_clause":
+                    for s in c.children:
+                        if s.type == "statement_block":
+                            for inner in s.children:
+                                if inner.type in ("{", "}"):
+                                    continue
+                                self._collect_returns_from_stmt(
+                                    inner, out, guards, depth + 1,
+                                )
+            return
+
+        if stype in (
+            "for_statement", "for_in_statement",
+            "while_statement", "do_statement",
+        ):
+            for c in stmt.children:
+                if c.type == "statement_block":
+                    for s in c.children:
+                        if s.type in ("{", "}"):
+                            continue
+                        self._collect_returns_from_stmt(
+                            s, out, guards, depth + 1
+                        )
+            return
+
+        if stype == "switch_statement":
+            for c in stmt.children:
+                if c.type == "switch_body":
+                    for case in c.children:
+                        if case.type in ("switch_case", "switch_default"):
+                            case_expr = (
+                                self._extract_switch_case_expr(case)
+                                if case.type == "switch_case"
+                                else "default"
+                            )
+                            case_guard = f"case {case_expr}"
+                            for s in case.children:
+                                if s.type in ("case", "default", ":"):
+                                    continue
+                                if s.type in ("switch_case",):
+                                    continue
+                                self._collect_returns_from_stmt(
+                                    s, out, guards + [case_guard],
+                                    depth + 1,
+                                )
+            return
+
+        if stype == "statement_block":
+            for s in stmt.children:
+                if s.type in ("{", "}"):
+                    continue
+                self._collect_returns_from_stmt(
+                    s, out, guards, depth + 1
+                )
+            return
+
+    def _extract_return_value(self, ret_node) -> str:
+        skip = {"return", ";"}
+        for c in ret_node.children:
+            if c.type not in skip:
+                return self._text(c)
+        return "undefined"
+
+    def _extract_throw_value(self, throw_node) -> str:
+        skip = {"throw", ";"}
+        for c in throw_node.children:
+            if c.type not in skip:
+                return self._text(c)
+        return "Error"
+
+    def _extract_throw_type(self, throw_node) -> str:
+        """猜测抛出的异常类型名。"""
+        for c in throw_node.children:
+            if c.type == "new_expression":
+                for nc in c.children:
+                    if nc.type in ("identifier", "type_identifier"):
+                        return self._text(nc)
+            if c.type in ("identifier", "type_identifier"):
+                return self._text(c)
+            if c.type == "call_expression":
+                for cc in c.children:
+                    if cc.type in ("identifier", "type_identifier"):
+                        return self._text(cc)
+        return "Error"
 
     def _iter_children(self, node):
         """安全遍历子节点。"""

@@ -54,11 +54,11 @@ TEST_COMMANDS: dict[str, dict] = {
         "framework": "maven",
         # Maven -Dtest 期望类名而非文件路径，用 {test_class} 占位
         # 用 ; 而非 && 确保测试失败时仍复制报告
-        # 只复制第一个 XML 文件到 {report}
+        # 精准匹配 TEST-*{test_class}.xml，避免多测试类时取错报告
         "command": (
             "mvn test -Dtest={test_class} "
-            "; for f in target/surefire-reports/*.xml; "
-            "do cp \"$f\" {report}; break; done 2>/dev/null; true"
+            "; cp target/surefire-reports/TEST-*{test_class}.xml {report} "
+            "2>/dev/null; true"
         ),
         "report_format": "surefire",
         "needs_build": True,
@@ -200,10 +200,14 @@ FAILURE_RULES: dict[str, list[tuple[str, str, str]]] = {
         (r"no such file or directory", "file_error", "test_env"),
     ],
     "java": [
-        (r"org\.junit\.|AssertionError|assert ", "assertion_error",
-         "test_logic"),
+        # JUnit5 异常为 org.opentest4j.AssertionFailedError（非 JUnit4 的 org.junit.*.AssertionError），
+        # 断言消息格式 "expected: <x> but was: <y>"，需显式覆盖
+        (r"org\.junit\.|org\.opentest4j\.|AssertionFailedError|AssertionError|expected:.*but was:|assert ",
+         "assertion_error", "test_logic"),
+        # 单测中 NPE 多为 mock 不到位（漏 stub / 链式 put 返回旧值 null），
+        # 降级 test_logic 让 skill 自动修测试；确属源码 bug 时 2 轮修不好仍会报告
         (r"java\.lang\.NullPointerException", "null_pointer",
-         "target_bug"),
+         "test_logic"),
         (r"java\.lang\.ClassNotFoundException", "class_not_found",
          "test_setup"),
         (r"java\.lang\.IllegalArgumentException", "illegal_argument",

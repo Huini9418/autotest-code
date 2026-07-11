@@ -21,6 +21,40 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lang import get_failure_rules, get_build_error_rules, get_pytest_plugins  # noqa: E402
 
+# 导入临时目录工具
+try:
+    from utils.temp_dir import is_safe_path
+except ImportError:
+    # 向后兼容：如果 utils 模块不存在，提供简单实现
+    def is_safe_path(path: str | Path) -> bool:
+        try:
+            resolved = Path(os.path.expanduser(str(path))).resolve()
+            temp_dirs = [
+                Path(tempfile.gettempdir()).resolve(),
+                Path("/tmp").resolve(),
+                Path("/var/tmp").resolve(),
+            ]
+            for temp_dir in temp_dirs:
+                try:
+                    if resolved.is_relative_to(temp_dir):
+                        return True
+                except ValueError:
+                    pass
+            try:
+                user_home = Path.home().resolve()
+                if resolved.is_relative_to(user_home):
+                    relative_parts = resolved.relative_to(user_home).parts
+                    if relative_parts:
+                        first_part = relative_parts[0]
+                        allowed_dirs = {".claude", ".qwenpaw", ".opencode", ".codex"}
+                        if first_part in allowed_dirs:
+                            return True
+            except RuntimeError:
+                pass
+        except (OSError, RuntimeError):
+            pass
+        return False
+
 # 通用失败规则（所有语言共用，在语言规则之前匹配）
 COMMON_FAILURE_RULES: list[tuple[str, str, str]] = [
     (r"TimeoutError|timed out|deadline", "timeout", "test_env"),
@@ -362,35 +396,10 @@ def _validate_history_path(path: str) -> str:
     """验证 history file 路径必须在 tmp 或特定平台目录下。"""
     resolved = Path(os.path.expanduser(path)).resolve()
 
-    # 检查是否在临时目录下
-    temp_dirs = [
-        Path(tempfile.gettempdir()).resolve(),
-        Path("/tmp").resolve(),
-        Path("/var/tmp").resolve(),
-    ]
-    in_temp = any(resolved.is_relative_to(d) for d in temp_dirs)
-
-    # 检查是否在特定平台目录下
-    in_allowed_dir = False
-    try:
-        user_home = Path.home().resolve()
-        if resolved.is_relative_to(user_home):
-            # 获取相对于 user_home 的路径部分
-            relative_parts = resolved.relative_to(user_home).parts
-            if relative_parts:
-                # 只允许特定的平台目录
-                first_part = relative_parts[0]
-                allowed_dirs = {".claude", ".qwenpaw", ".opencode", ".codex"}
-                if first_part in allowed_dirs:
-                    in_allowed_dir = True
-    except RuntimeError:
-        # 无法获取 home 目录时，只允许 tmp 目录
-        pass
-
-    if not (in_temp or in_allowed_dir):
+    if not is_safe_path(resolved):
         raise ValueError(
-            f"history file must be under a temp directory or one of: "
-            f"~/.claude, ~/.qwenpaw, ~/.opencode, ~/.codex, got: {resolved}"
+            f"history file must be under a temp directory, skill temp directory, "
+            f"or one of: ~/.claude, ~/.qwenpaw, ~/.opencode, ~/.codex, got: {resolved}"
         )
     return str(resolved)
 
